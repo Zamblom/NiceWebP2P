@@ -320,10 +320,13 @@
 
             const offer = this.connection
                 .createOffer()
-                .then((offer) => this.connection.setLocalDescription(offer))
+                .then((offer) => {
+                    offer.sdp = WebP2PDialogue.processSdp(offer.sdp);
+                    return this.connection.setLocalDescription(offer);
+                })
                 .then(() => {
-                    const offerString = btoa(this.connection.localDescription.sdp);
-                    this.stages.offer.querySelector(".out-of-band.outbound").textContent = offerString;
+                    const encSdp = WebP2PDialogue.encodeSdp(this.connection.localDescription.sdp);
+                    this.stages.offer.querySelector(".out-of-band.outbound").textContent = encSdp;
                     this.acceptManualIceCandidates();
                 });
         }
@@ -339,7 +342,7 @@
             if (this.connection === null) throw Error("connection was null");
             if (this.channel !== null) throw Error("channel was not null");
             
-            const offer = {type: "offer", sdp: atob(offerString.split(";")[0])};
+            const offer = {type: "offer", sdp: WebP2PDialogue.decodeSdp(offerString.split(";")[0])};
             
             this.connection.addEventListener("datachannel", (event) => {
                 this.channel = event.channel;
@@ -351,12 +354,15 @@
                 .setRemoteDescription(offer)
                 .then(() => {
                     Promise
-                        .all(offerString.split(";").slice(1).map(x => this.connection.addIceCandidate(JSON.parse(atob(x)))))        
+                        .all(offerString.split(";").slice(1).map(x => this.connection.addIceCandidate(WebP2PDialogue.decodeCandidate(x))))
                         .then(() => this.connection.createAnswer())
-                        .then((answer) => this.connection.setLocalDescription(answer))
+                        .then((answer) => {
+                            answer.sdp = WebP2PDialogue.processSdp(answer.sdp);
+                            return this.connection.setLocalDescription(answer);
+                        })
                         .then(() => {
-                            const answerString = btoa(this.connection.localDescription.sdp);
-                            this.stages.answer.querySelector(".out-of-band.outbound").textContent = answerString;
+                            const base64sdp = WebP2PDialogue.encodeSdp(this.connection.localDescription.sdp);
+                            this.stages.answer.querySelector(".out-of-band.outbound").textContent = base64sdp;
                             this.acceptManualIceCandidates();
                             this.show("answer");
                         });
@@ -367,13 +373,13 @@
             if (this.connection === null) throw Error("connection was null");
             if (this.channel === null) throw Error("channel was null");
 
-            const answer = {type: "answer", sdp: atob(answerString.split(";")[0])};
+            const answer = {type: "answer", sdp: WebP2PDialogue.decodeSdp(answerString.split(";")[0])};
             
             this.connection
                 .setRemoteDescription(answer)
                 .then(() => {
                     Promise
-                        .all(answerString.split(";").slice(1).map(x => this.connection.addIceCandidate(JSON.parse(atob(x)))))
+                        .all(answerString.split(";").slice(1).map(x => this.connection.addIceCandidate(WebP2PDialogue.decodeCandidate(x))))
                         .then(() => this.complete());
                 });
         }
@@ -403,8 +409,121 @@
             this.connection = null;
         }
 
+        static processSdp(sdp) {
+            return sdp;
+        }
+
+        static encodeSdp(sdp) {
+            // console.log("SDP:", sdp);
+            const sdpDict = {
+                c: null,
+                o: null,
+                aFingerprint: null,
+                aIcePwd: null,
+                aIceUfrag: null,
+                aMaxMessageSize: null,
+                aMsidSemantic: null,
+                aSendRecv: null,
+                aSetup: null,
+            };
+            
+            sdp
+                .split("\r\n")
+                .map(line => {
+                    if (line.startsWith("v=")) return null;
+                    if (line.startsWith("s=")) return null;
+                    if (line.startsWith("t=")) return null;
+                    if (line.startsWith("m=application")) return null;
+                    if (line.startsWith("a=group")) return null;
+                    if (line.startsWith("a=ice-options")) return null;
+                    if (line.startsWith("a=extmap-allow-mixed")) return null;
+                    if (line.startsWith("a=mid")) return null;                    
+                    if (line.startsWith("a=sctp-port")) return null;
+                    return line;
+                })
+                .filter(x => x !== null)
+                .forEach(x => {
+                    if (x.startsWith("c=")) sdpDict.c = x.slice("c=IN IP".length);
+                    if (x.startsWith("o=")) sdpDict.o = x.slice("o=".length);
+                    if (x.startsWith("a=fingerprint")) sdpDict.aFingerprint = x.slice("a=fingerprint:sha-256 ".length);
+                    if (x.startsWith("a=ice-pwd")) sdpDict.aIcePwd = x.slice("a=ice-pwd:".length);
+                    if (x.startsWith("a=ice-ufrag")) sdpDict.aIceUfrag = x.slice("a=ice-ufrag:".length);
+                    if (x.startsWith("a=max-message-size")) sdpDict.aMaxMessageSize = x.slice("a=max-message-size:".length);
+                    if (x.startsWith("a=msid-semantic")) sdpDict.aMsidSemantic = x.slice("a=msid-semantic:".length);
+                    if (x.startsWith("a=sendrecv")) sdpDict.aSendRecv = "1";
+                    if (x.startsWith("a=setup")) sdpDict.aSetup = x.slice("a=setup:act".length);
+                });
+
+            const encSdp = Object.values(sdpDict).join(",");
+
+            // console.log("Encoded SDP:", encSdp);
+            return encSdp;
+        }
+
+        static decodeSdp(encSdp) {
+            // console.log("Encoded SDP:", encSdp);
+
+            const constants = [
+                "v=0",
+                "s=-",
+                "t=0 0",
+                "m=application 9 UDP/DTLS/SCTP webrtc-datachannel",
+                "a=group:BUNDLE 0",
+                "a=ice-options:trickle",
+                "a=extmap-allow-mixed",
+                "a=mid:0",
+                "a=sctp-port:5000",
+            ];
+
+            const sdpList = encSdp.split(",");
+
+            const sdpDict = {
+                c: sdpList[0],
+                o: sdpList[1],
+                aFingerprint: sdpList[2],
+                aIcePwd: sdpList[3],
+                aIceUfrag: sdpList[4],
+                aMaxMessageSize: sdpList[5],
+                aMsidSemantic: sdpList[6],
+                aSendRecv: sdpList[7],
+                aSetup: sdpList[8],
+            };
+
+            let sdp = constants[0] + "\r\n";
+            if (sdpDict.o !== "") sdp += "o=" + sdpDict.o + "\r\n";
+            sdp += constants[1] + "\r\n";
+            if (sdpDict.c !== "") sdp += "c=IN IP" + sdpDict.c + "\r\n";
+            sdp += constants[2] + "\r\n";
+            sdp += constants[3] + "\r\n";
+            if (sdpDict.aFingerprint !== "") sdp += "a=fingerprint:sha-256 " + sdpDict.aFingerprint + "\r\n";
+            if (sdpDict.aIcePwd !== "") sdp += "a=ice-pwd:" + sdpDict.aIcePwd + "\r\n";
+            if (sdpDict.aIceUfrag !== "") sdp += "a=ice-ufrag:" + sdpDict.aIceUfrag + "\r\n";
+            if (sdpDict.aMaxMessageSize !== "") sdp += "a=max-message-size:" + sdpDict.aMaxMessageSize + "\r\n";
+            if (sdpDict.aMsidSemantic !== "") sdp += "a=msid-semantic:" + sdpDict.aMsidSemantic + "\r\n";
+            if (sdpDict.aSendRecv !== "") sdp += "a=sendrecv\r\n";
+            if (sdpDict.aSetup !== "") sdp += "a=setup:act" + sdpDict.aSetup + "\r\n";
+            sdp += constants.slice(4).join("\r\n") + "\r\n";
+
+            // console.log("SDP:", sdp);
+            return sdp;
+        }
+
+        static encodeCandidate(candidate) {
+            return candidate.candidate + "," + candidate.usernameFragment;
+        }
+
+        static decodeCandidate(encCandidate) {
+            return {
+                candidate: encCandidate.split(",")[0],
+                sdpMLineIndex: 0,
+                sdpMid: "0",
+                usernameFragment: encCandidate.split(",")[1],
+            };
+        }
+
         outOfBandToClipboard(text) {
             if (this.acceptingManualIceCandidates) return;
+            if (navigator.clipboard === undefined) return;
             navigator.clipboard.writeText(text);
             this.shadowRoot.querySelectorAll(".copied").forEach(el => el.classList.remove("hidden"));
             setTimeout(() => {this.querySelectorAll(".copied").forEach(el => el.classList.add("hidden"))}, 3000);
@@ -421,15 +540,69 @@
         }
 
         handleIceCandidate = (event) => {
+            if (event.candidate === null) return;
             this.iceCandidateQueue.push(event.candidate);
             if (!this.acceptingManualIceCandidates) return;
             while (this.iceCandidateQueue.length > 0) {
-                const iceCandidateString = btoa(JSON.stringify(this.iceCandidateQueue.pop()));
-                this.shadowRoot.querySelectorAll(".out-of-band.outbound").forEach(el => el.textContent += ";" + iceCandidateString);
+                const encCandidate = WebP2PDialogue.encodeCandidate(this.iceCandidateQueue.pop());
+                this.shadowRoot.querySelectorAll(".out-of-band.outbound").forEach(el => el.textContent += ";" + encCandidate);
             }
         }
     }
     customElements.define("custom-webp2p-dialogue", WebP2PDialogue);
+</script>
+<script>
+    // window.addEventListener("load", () => {
+    //     const sdps = [
+    //         "v=0\r\no=mozilla...THIS_IS_SDPARTA-99.0 2727299516152174765 0 IN IP4 0.0.0.0\r\ns=-\r\nt=0 0\r\na=sendrecv\r\na=fingerprint:sha-256 B5:96:7B:B0:06:75:0A:2A:72:6D:DE:84:02:46:8B:82:28:1D:60:AF:0B:9D:19:8C:AE:E9:8C:F8:47:BC:09:1A\r\na=group:BUNDLE 0\r\na=ice-options:trickle\r\na=msid-semantic:WMS *\r\nm=application 9 UDP/DTLS/SCTP webrtc-datachannel\r\nc=IN IP4 0.0.0.0\r\na=sendrecv\r\na=extmap-allow-mixed\r\na=ice-pwd:92c788384a3505972a78598b021e2019\r\na=ice-ufrag:6349d1f8\r\na=mid:0\r\na=setup:active\r\na=sctp-port:5000\r\na=max-message-size:1073741823\r\n",
+    //         "v=0\r\no=mozilla...THIS_IS_SDPARTA-99.0 562977741876855617 0 IN IP4 0.0.0.0\r\ns=-\r\nt=0 0\r\na=sendrecv\r\na=fingerprint:sha-256 0A:D4:6F:93:1C:CF:8D:CD:44:59:D0:4F:9B:E6:A3:11:32:95:6F:83:3A:58:B0:48:F0:37:F2:B1:DD:22:9E:11\r\na=group:BUNDLE 0\r\na=ice-options:trickle\r\na=msid-semantic:WMS *\r\nm=application 9 UDP/DTLS/SCTP webrtc-datachannel\r\nc=IN IP4 0.0.0.0\r\na=sendrecv\r\na=extmap-allow-mixed\r\na=ice-pwd:15246242d3532dce33dcef83e2af3e00\r\na=ice-ufrag:9df255b4\r\na=mid:0\r\na=setup:actpass\r\na=sctp-port:5000\r\na=max-message-size:1073741823\r\n",
+    //         "v=0\r\no=- 3874523538461469042 2 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\na=group:BUNDLE 0\r\na=extmap-allow-mixed\r\na=msid-semantic: WMS\r\nm=application 9 UDP/DTLS/SCTP webrtc-datachannel\r\nc=IN IP4 0.0.0.0\r\na=ice-ufrag:hpQY\r\na=ice-pwd:6jaerEIExQmg3o6HVwxbTitG\r\na=ice-options:trickle\r\na=fingerprint:sha-256 05:48:35:A6:97:02:BE:C3:FC:3A:A2:79:C7:20:A5:A7:CD:D7:BD:A4:CB:CC:C7:C8:4C:A0:1E:02:5E:F5:B5:AF\r\na=setup:actpass\r\na=mid:0\r\na=sctp-port:5000\r\na=max-message-size:262144\r\n"
+    //     ];
+    //     const candidates = [
+    //         {"candidate":"candidate:0 1 UDP 2122187007 b32529f0-9d52-499d-8882-9caf6a649940.local 60588 typ host","sdpMLineIndex":0,"sdpMid":"0","usernameFragment":"6349d1f8"},
+    //         {"candidate":"candidate:1 1 UDP 2122252543 1e75ab9f-0dae-4a03-a672-5541d6d52744.local 60589 typ host","sdpMLineIndex":0,"sdpMid":"0","usernameFragment":"6349d1f8"},
+    //         {"candidate":"candidate:2 1 TCP 2105458943 b32529f0-9d52-499d-8882-9caf6a649940.local 9 typ host tcptype active","sdpMLineIndex":0,"sdpMid":"0","usernameFragment":"6349d1f8"},
+    //         {"candidate":"candidate:3 1 TCP 2105524479 1e75ab9f-0dae-4a03-a672-5541d6d52744.local 9 typ host tcptype active","sdpMLineIndex":0,"sdpMid":"0","usernameFragment":"6349d1f8"},
+    //         {"candidate":"","sdpMLineIndex":0,"sdpMid":"0","usernameFragment":"6349d1f8"},
+    //         {"candidate":"candidate:0 1 UDP 2122187007 76ca8f9d-889f-4152-aad7-ff2bdcd4c3df.local 60187 typ host","sdpMLineIndex":0,"sdpMid":"0","usernameFragment":"9df255b4"},
+    //         {"candidate":"candidate:1 1 UDP 2122252543 9b05fe85-f20e-4422-8d38-04ace19e7587.local 60188 typ host","sdpMLineIndex":0,"sdpMid":"0","usernameFragment":"9df255b4"},
+    //         {"candidate":"candidate:2 1 TCP 2105458943 76ca8f9d-889f-4152-aad7-ff2bdcd4c3df.local 9 typ host tcptype active","sdpMLineIndex":0,"sdpMid":"0","usernameFragment":"9df255b4"},
+    //         {"candidate":"candidate:3 1 TCP 2105524479 9b05fe85-f20e-4422-8d38-04ace19e7587.local 9 typ host tcptype active","sdpMLineIndex":0,"sdpMid":"0","usernameFragment":"9df255b4"},
+    //         {"candidate":"","sdpMLineIndex":0,"sdpMid":"0","usernameFragment":"9df255b4"},
+    //         {"candidate":"candidate:3227745363 1 udp 2113937151 178027d8-c04a-42f2-944f-07ad6856328c.local 55131 typ host generation 0 ufrag hpQY network-cost 999","sdpMid":"0","sdpMLineIndex":0,"usernameFragment":"hpQY"},
+    //     ];
+
+    //     function isSameSdp(sdpA, sdpB) {
+    //         const linesA = sdpA.split("\r\n");
+    //         const linesB = sdpB.split("\r\n");
+    //         for (const lineA of linesA) {
+    //             if (linesB.findIndex(x => x === lineA) === -1) {
+    //                 console.log("Failing Line:", lineA);
+    //                 return false;
+    //             }
+    //         }
+    //         for (const lineB of linesB) {
+    //             if (linesA.findIndex(x => x === lineB) === -1) {
+    //                 console.log("Failing Line:", lineB);
+    //                 return false;
+    //             }
+    //         }
+    //         return true;
+    //     }
+
+    //     function isSameCandidate(candidateA, candidateB) {
+    //         for (const field in candidateA) {
+    //             if (candidateA[field] !== candidateB[field]) return false;
+    //         }
+    //         for (const field in candidateB) {
+    //             if (candidateA[field] !== candidateB[field]) return false;
+    //         }
+    //         return true;
+    //     }
+
+    //     sdps.forEach(x => console.log(isSameSdp(x, WebP2PDialogue.decodeSdp(WebP2PDialogue.encodeSdp(x)))));
+    //     candidates.forEach(x => console.log(isSameCandidate(x, WebP2PDialogue.decodeCandidate(WebP2PDialogue.encodeCandidate(x)))));
+    // });
 </script>
 <script>
     let connection = null;
