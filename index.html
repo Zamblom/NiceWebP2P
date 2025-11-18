@@ -4,20 +4,6 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>NiceWebP2P</title>
-    <style id="style-connect-button">
-        #webp2p-connect {
-            position: absolute;
-            display: block;
-            top: 50%;
-            left: 50%;
-            transform: translate(-50%, -50%);
-            font-size: 1.5rem;
-            font-weight: bold;
-            font-family: sans-serif;
-            padding: 0.7rem;
-            border-radius: 1rem;
-        }
-    </style>
     <style id="style-message-app">
         body {
             background-color: lightgrey;
@@ -97,6 +83,13 @@
             }
         }
     </style>
+    <style id="style-webp2p-dialogue">
+        #webp2p-dialogue {
+            button:disabled {
+                cursor: wait;
+            }
+        }
+    </style>
     <link rel="shortcut icon" href="data:" type="image/x-icon">
 </head>
 <body>
@@ -107,526 +100,158 @@
             <button onclick="sendMessage(this.previousElementSibling.value); this.previousElementSibling.value = '';">Send</button>
         </div>
     </div>
-    <button id="webp2p-connect" onclick="document.querySelector('custom-webp2p-dialogue').begin()">Connect</button>
-    <custom-webp2p-dialogue onconnection="handleConnection(event)"></custom-webp2p-dialogue>
-    <template id="template-webp2p-dialogue">
-        <style>
-            #webp2p-dialogue {
-                position: absolute;
-                top: 50%;
-                left: 50%;
-                transform: translate(-50%, -50%);
-                background-color: #f7f7f7;
-                border: 2px solid grey;
-                border-radius: 2rem;
-                width: 30dvw;
-                text-align: center;
-                font-family: sans-serif;
-            }
 
-            .stage {
-                display: flex;
-                flex-direction: column;
-                align-items: center;
-                padding: 2rem;
-                
-                > * {
-                    margin: 0;
-                    width: 100%;
-                    min-height: 2rem;
-                    border-radius: 0.8rem;
-                    margin-top: 0.5rem;
-                    margin-bottom: 0.5rem;
-                }
-
-                > *:first-child {
-                    margin-top: 0;
-                }
-
-                > *:last-child {
-                    margin-bottom: 0;
-                }
-            }
-
-            .info {
-                height: 2rem;
-                line-height: 2rem;
-            }
-            
-            .copied {
-                transition: all 400ms;
-                overflow: hidden;
-                min-height: 0;
-                height: 2rem;
-                font-weight: bold;
-                margin-top: 0.2rem;
-                margin-bottom: 0.2rem;
-                opacity: 1;
-            }
-            
-            .out-of-band {
-                border: 1px solid grey;
-                border-radius: 0.5rem;
-                overflow-wrap: anywhere;
-                padding: 0.5rem;
-                background-color: white;
-                cursor: pointer;
-                resize: none;
-            }
-            
-            .out-of-band:hover {
-                background-color: #f0f0ff;
-                box-shadow: inset 2px 2px darkgrey;
-            }
-
-            .hidden {
-                height: 0;
-                opacity: 0;
-            }
-
-            .pending {
-                cursor: wait;
-            }
-        </style>
-        <div id="webp2p-dialogue">
-            <div id="begin" class="stage">
-                <p class="info">Connect as</p>
-                <button onclick="this.getRootNode().host.offer()">Host</button>
-                <button onclick="this.getRootNode().host.offerToAnswer()">Player</button>
-            </div>
-            <div id="offer" class="stage">
-                <p class="info">Send the following data to a player:</p>
-                <p class="copied hidden">Copied!</p>
-                <p class="out-of-band outbound" title="Click to Copy" onclick="this.getRootNode().host.outOfBandToClipboard(this.textContent)"></p>
-                <p class="info">Enter data from the player:</p>
-                <textarea class="out-of-band inbound" title="Paste Data Here" oninput="this.getRootNode().host.answerToComplete(this.value)"></textarea>
-            </div>
-            <div id="offer-to-answer" class="stage">
-                <p class="info">Enter data from the host:</p>
-                <textarea class="out-of-band inbound" title="Paste Data Here" oninput="this.getRootNode().host.answer(this.value)"></textarea>
-            </div>
-            <div id="answer" class="stage">
-                <p class="info">Send the following data to the host:</p>
-                <p class="copied hidden">Copied!</p>
-                <p class="out-of-band outbound" title="Click to Copy" onclick="this.getRootNode().host.outOfBandToClipboard(this.textContent)"></p>
-            </div>
-            <div id="complete" class="stage">
-                <p class="info">Setup Complete, Establishing</p>
-            </div>
+    <div id="webp2p-dialogue">
+        <div id="begin">
+            <p class="info">Connect as</p>
+            <button onclick="extendOffer()">Host</button>
+            <button onclick="receiveOffer()">Player</button>
         </div>
-    </template>
+        <div id="extend-offer">
+            <button id="copy-offer" class="start-disabled" onclick="copyOffer()">Click to copy data, then send to player.</button>
+        </div>
+        <div id="receive-offer">
+            <button onclick="pasteOffer()">Click to paste data from host.</button>
+        </div>
+        <div id="extend-answer">
+            <button id="copy-answer" class="start-disabled" onclick="copyAnswer()">Click to copy data, then send to host.</button>
+        </div>
+        <div id="receive-answer">
+            <button onclick="pasteAnswer()">Click to paste data from player.</button>
+        </div>
+        <div id="pending">
+            <p>Attempting to establish connection...</p>
+        </div>
+    </div>
 </body>
 <script id="script-webp2p">
     "use strict";
 
-    class WebP2PDialogue extends HTMLElement {
-        static observedAttributes = ["onconnection"];
-        static iceConfiguration = {
-            iceServers: [
-                { urls: "stun:stun.l.google.com:19302" },
-                { urls: "stun:stun.l.google.com:5349" },
-                { urls: "stun:stun1.l.google.com:3478" },
-                { urls: "stun:stun1.l.google.com:5349" },
-            ],
-        };
+    const iceConfiguration = {
+        iceServers: [
+            { urls: "stun:stun.l.google.com:19302" },
+            { urls: "stun:stun.l.google.com:5349"  },
+            { urls: "stun:stun1.l.google.com:3478" },
+            { urls: "stun:stun1.l.google.com:5349" },
+        ],
+    };
 
-        stages = {
-            begin: null,
-            offer: null,
-            offerToAnswer: null,
-            answer: null,
-            complete: null,
-        };
-        connection = null;
-        channel = null;
-        acceptingManualIceCandidates = false;
-        iceCandidateQueue = [];
+    const webp2pDialogue = document.querySelector("#webp2p-dialogue");
+    webp2pDialogue.connection = null;
+    webp2pDialogue.channel = null;
 
-        constructor() {
-            super();
-
-            this.attachShadow({mode: "open"});
-            this.shadowRoot.appendChild(document.querySelector("#template-webp2p-dialogue").content.cloneNode(true));
-
-            for (const stageName in this.stages) {
-                this.stages[stageName] = this.shadowRoot.querySelector(`.stage#${stageName.replace(/[A-Z]+(?![a-z])|[A-Z]/g, ($, ofs) => (ofs ? "-" : "") + $.toLowerCase())}`);
-                this.stages[stageName].defaultDisplay = this.stages[stageName].style.display;
-            }
-
-            this.shadowRoot.querySelectorAll("textarea").forEach(el => {
-                el.autocomplete = "off";
-                el.autocorrect = "off";
-                el.autocapitalize = "off";
-                el.spellcheck = "false";
-                el.style.height = el.scrollHeight + "px";
-                el.style.overflowY = "hidden";
-                el.addEventListener("input", () => {
-                    el.style.height = "auto";
-                    el.style.height = el.scrollHeight + "px";
-                });
-            });
-        }
-        
-        connectedCallback() {
-            this.hide();
-            this.addEventListener("connection", this.onconnection);
-        }
-
-        attributeChangedCallback(name, oldValue, newValue) {
-            if (name !== "onconnection") return;
-            this.removeEventListener("connection", this.onconnection);
-            this.onconnection = Function(event, newValue);
-            this.addEventListener("connection", this.onconnection);
-        }
-
-        onconnection(connection, channel) {
-            if (this.connection === null) throw Error("connection was null");
-            if (this.channel === null) throw Error("channel was null");
-
-            console.log("Set onconnection attribute to receive connection and channel");
-
-            channel.close();
-            connection.close();
-        }
-
-        show(stageName) {
-            this.hide();
-            this.style.display = "block";
-            this.stages[stageName].style.display = this.stages[stageName].defaultDisplay;
-        }
-        hide() {
-            this.style.display = "none";
-            Object.values(this.stages).forEach(x => x.style.display = "none");
-        }
-
-        begin() {
-            if (this.connection !== null) throw Error("connection was not null");
-            if (this.channel !== null) throw Error("channel was not null");
-
-            this.show("begin");
-            
-            this.connection = new RTCPeerConnection(this.iceConfiguration);
-            this.connection.addEventListener("icecandidate", this.handleIceCandidate);
-        }
-
-        offer() {
-            if (this.connection === null) throw Error("connection was null");
-            if (this.channel !== null) throw Error("channel was not null");
-
-            this.show("offer");
-
-            this.channel = this.connection.createDataChannel("channel");
-            this.channel.addEventListener("open", this.success);
-
-            const offer = this.connection
-                .createOffer()
-                .then((offer) => {
-                    offer.sdp = WebP2PDialogue.processSdp(offer.sdp);
-                    return this.connection.setLocalDescription(offer);
-                })
-                .then(() => {
-                    const encSdp = WebP2PDialogue.encodeSdp(this.connection.localDescription.sdp);
-                    this.stages.offer.querySelector(".out-of-band.outbound").textContent = encSdp;
-                    this.acceptManualIceCandidates();
-                });
-        }
-
-        offerToAnswer() {
-            if (this.connection === null) throw Error("connection was null");
-            if (this.channel !== null) throw Error("channel was not null");
-
-            this.show("offerToAnswer");
-        }
-
-        answer(offerString) {
-            if (this.connection === null) throw Error("connection was null");
-            if (this.channel !== null) throw Error("channel was not null");
-            
-            const offer = {type: "offer", sdp: WebP2PDialogue.decodeSdp(offerString.split(";")[0])};
-            
-            this.connection.addEventListener("datachannel", (event) => {
-                this.channel = event.channel;
-                this.channel.addEventListener("open", this.success);
-                this.complete();
-            });
-            
-            this.connection
-                .setRemoteDescription(offer)
-                .then(() => {
-                    Promise
-                        .all(offerString.split(";").slice(1).map(x => this.connection.addIceCandidate(WebP2PDialogue.decodeCandidate(x))))
-                        .then(() => this.connection.createAnswer())
-                        .then((answer) => {
-                            answer.sdp = WebP2PDialogue.processSdp(answer.sdp);
-                            return this.connection.setLocalDescription(answer);
-                        })
-                        .then(() => {
-                            const base64sdp = WebP2PDialogue.encodeSdp(this.connection.localDescription.sdp);
-                            this.stages.answer.querySelector(".out-of-band.outbound").textContent = base64sdp;
-                            this.acceptManualIceCandidates();
-                            this.show("answer");
-                        });
-                });
-        }
-
-        answerToComplete(answerString) {
-            if (this.connection === null) throw Error("connection was null");
-            if (this.channel === null) throw Error("channel was null");
-
-            const answer = {type: "answer", sdp: WebP2PDialogue.decodeSdp(answerString.split(";")[0])};
-            
-            this.connection
-                .setRemoteDescription(answer)
-                .then(() => {
-                    Promise
-                        .all(answerString.split(";").slice(1).map(x => this.connection.addIceCandidate(WebP2PDialogue.decodeCandidate(x))))
-                        .then(() => this.complete());
-                });
-        }
-
-        complete() {
-            if (this.connection === null) throw Error("connection was null");
-            if (this.channel === null) throw Error("channel was null");
-
-            this.show("complete");
-        }
-        
-        success = (event) => {
-            this.hide();
-            [...this.shadowRoot.querySelectorAll(".out-of-band.outbound")].forEach(el => el.textContent = "");
-            [...this.shadowRoot.querySelectorAll(".out-of-band.inbound")].forEach(el => {
-                el.value = ""
-                el.style.height = "auto";
-                el.style.height = el.scrollHeight + "px";
-            });
-
-            const connectionEvent = new CustomEvent("connection", {detail: {
-                connection: this.connection,
-                channel: this.channel,
-            }})
-            this.dispatchEvent(connectionEvent);
-            this.channel = null;
-            this.connection = null;
-        }
-
-        static processSdp(sdp) {
-            return sdp;
-        }
-
-        static encodeSdp(sdp) {
-            // console.log("SDP:", sdp);
-            const sdpDict = {
-                c: null,
-                o: null,
-                aFingerprint: null,
-                aIcePwd: null,
-                aIceUfrag: null,
-                aMaxMessageSize: null,
-                aMsidSemantic: null,
-                aSendRecv: null,
-                aSetup: null,
-            };
-            
-            sdp
-                .split("\r\n")
-                .map(line => {
-                    if (line.startsWith("v=")) return null;
-                    if (line.startsWith("s=")) return null;
-                    if (line.startsWith("t=")) return null;
-                    if (line.startsWith("m=application")) return null;
-                    if (line.startsWith("a=group")) return null;
-                    if (line.startsWith("a=ice-options")) return null;
-                    if (line.startsWith("a=extmap-allow-mixed")) return null;
-                    if (line.startsWith("a=mid")) return null;                    
-                    if (line.startsWith("a=sctp-port")) return null;
-                    return line;
-                })
-                .filter(x => x !== null)
-                .forEach(x => {
-                    if (x.startsWith("c=")) sdpDict.c = x.slice("c=IN IP".length);
-                    if (x.startsWith("o=")) sdpDict.o = x.slice("o=".length);
-                    if (x.startsWith("a=fingerprint")) sdpDict.aFingerprint = x.slice("a=fingerprint:sha-256 ".length);
-                    if (x.startsWith("a=ice-pwd")) sdpDict.aIcePwd = x.slice("a=ice-pwd:".length);
-                    if (x.startsWith("a=ice-ufrag")) sdpDict.aIceUfrag = x.slice("a=ice-ufrag:".length);
-                    if (x.startsWith("a=max-message-size")) sdpDict.aMaxMessageSize = x.slice("a=max-message-size:".length);
-                    if (x.startsWith("a=msid-semantic")) sdpDict.aMsidSemantic = x.slice("a=msid-semantic:".length);
-                    if (x.startsWith("a=sendrecv")) sdpDict.aSendRecv = "1";
-                    if (x.startsWith("a=setup")) sdpDict.aSetup = x.slice("a=setup:act".length);
-                });
-
-            const encSdp = Object.values(sdpDict).join(",");
-
-            // console.log("Encoded SDP:", encSdp);
-            return encSdp;
-        }
-
-        static decodeSdp(encSdp) {
-            // console.log("Encoded SDP:", encSdp);
-
-            const constants = [
-                "v=0",
-                "s=-",
-                "t=0 0",
-                "m=application 9 UDP/DTLS/SCTP webrtc-datachannel",
-                "a=group:BUNDLE 0",
-                "a=ice-options:trickle",
-                "a=extmap-allow-mixed",
-                "a=mid:0",
-                "a=sctp-port:5000",
-            ];
-
-            const sdpList = encSdp.split(",");
-
-            const sdpDict = {
-                c: sdpList[0],
-                o: sdpList[1],
-                aFingerprint: sdpList[2],
-                aIcePwd: sdpList[3],
-                aIceUfrag: sdpList[4],
-                aMaxMessageSize: sdpList[5],
-                aMsidSemantic: sdpList[6],
-                aSendRecv: sdpList[7],
-                aSetup: sdpList[8],
-            };
-
-            let sdp = constants[0] + "\r\n";
-            if (sdpDict.o !== "") sdp += "o=" + sdpDict.o + "\r\n";
-            sdp += constants[1] + "\r\n";
-            if (sdpDict.c !== "") sdp += "c=IN IP" + sdpDict.c + "\r\n";
-            sdp += constants[2] + "\r\n";
-            sdp += constants[3] + "\r\n";
-            if (sdpDict.aFingerprint !== "") sdp += "a=fingerprint:sha-256 " + sdpDict.aFingerprint + "\r\n";
-            if (sdpDict.aIcePwd !== "") sdp += "a=ice-pwd:" + sdpDict.aIcePwd + "\r\n";
-            if (sdpDict.aIceUfrag !== "") sdp += "a=ice-ufrag:" + sdpDict.aIceUfrag + "\r\n";
-            if (sdpDict.aMaxMessageSize !== "") sdp += "a=max-message-size:" + sdpDict.aMaxMessageSize + "\r\n";
-            if (sdpDict.aMsidSemantic !== "") sdp += "a=msid-semantic:" + sdpDict.aMsidSemantic + "\r\n";
-            if (sdpDict.aSendRecv !== "") sdp += "a=sendrecv\r\n";
-            if (sdpDict.aSetup !== "") sdp += "a=setup:act" + sdpDict.aSetup + "\r\n";
-            sdp += constants.slice(4).join("\r\n") + "\r\n";
-
-            // console.log("SDP:", sdp);
-            return sdp;
-        }
-
-        static encodeCandidate(candidate) {
-            return candidate.candidate + "," + candidate.usernameFragment;
-        }
-
-        static decodeCandidate(encCandidate) {
-            return {
-                candidate: encCandidate.split(",")[0],
-                sdpMLineIndex: 0,
-                sdpMid: "0",
-                usernameFragment: encCandidate.split(",")[1],
-            };
-        }
-
-        outOfBandToClipboard(text) {
-            if (this.acceptingManualIceCandidates) return;
-            if (navigator.clipboard === undefined) return;
-            navigator.clipboard.writeText(text);
-            this.shadowRoot.querySelectorAll(".copied").forEach(el => el.classList.remove("hidden"));
-            setTimeout(() => {this.querySelectorAll(".copied").forEach(el => el.classList.add("hidden"))}, 3000);
-        }
-
-        acceptManualIceCandidates(duration=100) {
-            this.acceptingManualIceCandidates = true;
-            this.shadowRoot.querySelectorAll(".out-of-band.outbound").forEach(el => el.classList.add("pending"));
-            
-            setTimeout(() => {
-                this.acceptingManualIceCandidates = false;
-                this.shadowRoot.querySelectorAll(".out-of-band.outbound").forEach(el => el.classList.remove("pending"));
-            }, duration);
-        }
-
-        handleIceCandidate = (event) => {
-            if (event.candidate === null) return;
-            this.iceCandidateQueue.push(event.candidate);
-            if (!this.acceptingManualIceCandidates) return;
-            while (this.iceCandidateQueue.length > 0) {
-                const encCandidate = WebP2PDialogue.encodeCandidate(this.iceCandidateQueue.pop());
-                this.shadowRoot.querySelectorAll(".out-of-band.outbound").forEach(el => el.textContent += ";" + encCandidate);
-            }
-        }
-    }
-    customElements.define("custom-webp2p-dialogue", WebP2PDialogue);
-</script>
-<script>
-    // window.addEventListener("load", () => {
-    //     const sdps = [
-    //         "v=0\r\no=mozilla...THIS_IS_SDPARTA-99.0 2727299516152174765 0 IN IP4 0.0.0.0\r\ns=-\r\nt=0 0\r\na=sendrecv\r\na=fingerprint:sha-256 B5:96:7B:B0:06:75:0A:2A:72:6D:DE:84:02:46:8B:82:28:1D:60:AF:0B:9D:19:8C:AE:E9:8C:F8:47:BC:09:1A\r\na=group:BUNDLE 0\r\na=ice-options:trickle\r\na=msid-semantic:WMS *\r\nm=application 9 UDP/DTLS/SCTP webrtc-datachannel\r\nc=IN IP4 0.0.0.0\r\na=sendrecv\r\na=extmap-allow-mixed\r\na=ice-pwd:92c788384a3505972a78598b021e2019\r\na=ice-ufrag:6349d1f8\r\na=mid:0\r\na=setup:active\r\na=sctp-port:5000\r\na=max-message-size:1073741823\r\n",
-    //         "v=0\r\no=mozilla...THIS_IS_SDPARTA-99.0 562977741876855617 0 IN IP4 0.0.0.0\r\ns=-\r\nt=0 0\r\na=sendrecv\r\na=fingerprint:sha-256 0A:D4:6F:93:1C:CF:8D:CD:44:59:D0:4F:9B:E6:A3:11:32:95:6F:83:3A:58:B0:48:F0:37:F2:B1:DD:22:9E:11\r\na=group:BUNDLE 0\r\na=ice-options:trickle\r\na=msid-semantic:WMS *\r\nm=application 9 UDP/DTLS/SCTP webrtc-datachannel\r\nc=IN IP4 0.0.0.0\r\na=sendrecv\r\na=extmap-allow-mixed\r\na=ice-pwd:15246242d3532dce33dcef83e2af3e00\r\na=ice-ufrag:9df255b4\r\na=mid:0\r\na=setup:actpass\r\na=sctp-port:5000\r\na=max-message-size:1073741823\r\n",
-    //         "v=0\r\no=- 3874523538461469042 2 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\na=group:BUNDLE 0\r\na=extmap-allow-mixed\r\na=msid-semantic: WMS\r\nm=application 9 UDP/DTLS/SCTP webrtc-datachannel\r\nc=IN IP4 0.0.0.0\r\na=ice-ufrag:hpQY\r\na=ice-pwd:6jaerEIExQmg3o6HVwxbTitG\r\na=ice-options:trickle\r\na=fingerprint:sha-256 05:48:35:A6:97:02:BE:C3:FC:3A:A2:79:C7:20:A5:A7:CD:D7:BD:A4:CB:CC:C7:C8:4C:A0:1E:02:5E:F5:B5:AF\r\na=setup:actpass\r\na=mid:0\r\na=sctp-port:5000\r\na=max-message-size:262144\r\n"
-    //     ];
-    //     const candidates = [
-    //         {"candidate":"candidate:0 1 UDP 2122187007 b32529f0-9d52-499d-8882-9caf6a649940.local 60588 typ host","sdpMLineIndex":0,"sdpMid":"0","usernameFragment":"6349d1f8"},
-    //         {"candidate":"candidate:1 1 UDP 2122252543 1e75ab9f-0dae-4a03-a672-5541d6d52744.local 60589 typ host","sdpMLineIndex":0,"sdpMid":"0","usernameFragment":"6349d1f8"},
-    //         {"candidate":"candidate:2 1 TCP 2105458943 b32529f0-9d52-499d-8882-9caf6a649940.local 9 typ host tcptype active","sdpMLineIndex":0,"sdpMid":"0","usernameFragment":"6349d1f8"},
-    //         {"candidate":"candidate:3 1 TCP 2105524479 1e75ab9f-0dae-4a03-a672-5541d6d52744.local 9 typ host tcptype active","sdpMLineIndex":0,"sdpMid":"0","usernameFragment":"6349d1f8"},
-    //         {"candidate":"","sdpMLineIndex":0,"sdpMid":"0","usernameFragment":"6349d1f8"},
-    //         {"candidate":"candidate:0 1 UDP 2122187007 76ca8f9d-889f-4152-aad7-ff2bdcd4c3df.local 60187 typ host","sdpMLineIndex":0,"sdpMid":"0","usernameFragment":"9df255b4"},
-    //         {"candidate":"candidate:1 1 UDP 2122252543 9b05fe85-f20e-4422-8d38-04ace19e7587.local 60188 typ host","sdpMLineIndex":0,"sdpMid":"0","usernameFragment":"9df255b4"},
-    //         {"candidate":"candidate:2 1 TCP 2105458943 76ca8f9d-889f-4152-aad7-ff2bdcd4c3df.local 9 typ host tcptype active","sdpMLineIndex":0,"sdpMid":"0","usernameFragment":"9df255b4"},
-    //         {"candidate":"candidate:3 1 TCP 2105524479 9b05fe85-f20e-4422-8d38-04ace19e7587.local 9 typ host tcptype active","sdpMLineIndex":0,"sdpMid":"0","usernameFragment":"9df255b4"},
-    //         {"candidate":"","sdpMLineIndex":0,"sdpMid":"0","usernameFragment":"9df255b4"},
-    //         {"candidate":"candidate:3227745363 1 udp 2113937151 178027d8-c04a-42f2-944f-07ad6856328c.local 55131 typ host generation 0 ufrag hpQY network-cost 999","sdpMid":"0","sdpMLineIndex":0,"usernameFragment":"hpQY"},
-    //     ];
-
-    //     function isSameSdp(sdpA, sdpB) {
-    //         const linesA = sdpA.split("\r\n");
-    //         const linesB = sdpB.split("\r\n");
-    //         for (const lineA of linesA) {
-    //             if (linesB.findIndex(x => x === lineA) === -1) {
-    //                 console.log("Failing Line:", lineA);
-    //                 return false;
-    //             }
-    //         }
-    //         for (const lineB of linesB) {
-    //             if (linesA.findIndex(x => x === lineB) === -1) {
-    //                 console.log("Failing Line:", lineB);
-    //                 return false;
-    //             }
-    //         }
-    //         return true;
-    //     }
-
-    //     function isSameCandidate(candidateA, candidateB) {
-    //         for (const field in candidateA) {
-    //             if (candidateA[field] !== candidateB[field]) return false;
-    //         }
-    //         for (const field in candidateB) {
-    //             if (candidateA[field] !== candidateB[field]) return false;
-    //         }
-    //         return true;
-    //     }
-
-    //     sdps.forEach(x => console.log(isSameSdp(x, WebP2PDialogue.decodeSdp(WebP2PDialogue.encodeSdp(x)))));
-    //     candidates.forEach(x => console.log(isSameCandidate(x, WebP2PDialogue.decodeCandidate(WebP2PDialogue.encodeCandidate(x)))));
-    // });
-</script>
-<script>
-    let connection = null;
-    let channel = null;
-
-    function handleConnection(event) {
-        console.log("Received a connection and channel!");
-
-        document.querySelector("#webp2p-connect").style.display = "none";
-
-        connection = event.detail.connection;
-        channel = event.detail.channel;
-
-        // Allow time for other end to set event listeners
-        channel.addEventListener("message", event => handleMessage(event.data));
-        channel.addEventListener("close", handleClose);
-
-        setTimeout(() => {
-            begin();
-        }, 1000);
+    function showPage(pageName) {
+        console.log(`Showing page: ${pageName}`);
+        [...webp2pDialogue.children].forEach(x => x.style.display = "none");
+        const page = webp2pDialogue.querySelector(`#${pageName}`)
+        page.style.display = "block";
+        [...page.querySelectorAll(".start-disabled")].forEach(el => el.disabled = true);
     }
 
-    function handleMessage(message) {
-        console.log("In <- ", message);
+    function begin() {
+        showPage("begin");
+
+        // Create Connection
+        webp2pDialogue.connection = new RTCPeerConnection(iceConfiguration);
+    }
+
+    // User chose Host
+    function extendOffer() {
+        showPage("extend-offer");
+        
+        // Create Channel
+        webp2pDialogue.channel = webp2pDialogue.connection.createDataChannel("channel");
+        webp2pDialogue.channel.addEventListener("open", success);
+        
+        // Create Offer
+        webp2pDialogue.connection.addEventListener("icegatheringstatechange", (event) => {
+            if (webp2pDialogue.connection.iceGatheringState !== "complete") return;
+            // Enable button
+            webp2pDialogue.querySelector("#copy-offer").disabled = false;
+        }); 
+
+        webp2pDialogue.connection
+            .createOffer()
+            .then(offer => webp2pDialogue.connection.setLocalDescription(offer));
+    }
+
+    function copyOffer() {
+        console.log("Copying Offer");
+        navigator.clipboard.writeText(webp2pDialogue.connection.localDescription.sdp)
+            .then(() => showPage("receive-answer"));
+    }
+
+    // User chose Player
+    function receiveOffer() {
+        showPage("receive-offer");
+
+        // Receive Channel
+        webp2pDialogue.connection.addEventListener("datachannel", (event) => {
+            webp2pDialogue.channel = event.channel;
+            webp2pDialogue.channel.addEventListener("open", success);
+        });
+    }
+    
+    function pasteOffer() {
+        console.log("Pasting Offer");
+
+        webp2pDialogue.connection.addEventListener("icegatheringstatechange", (event) => {
+            if (webp2pDialogue.connection.iceGatheringState !== "complete") return;
+            // Reenable button
+            webp2pDialogue.querySelector("#copy-answer").disabled = false;
+        });
+
+        navigator.clipboard.readText()
+            .then(sdp => webp2pDialogue.connection.setRemoteDescription({type: "offer", sdp: sdp}))
+            .then(() => showPage("extend-answer"))
+            .then(() => webp2pDialogue.connection.createAnswer())
+            .then(answer => webp2pDialogue.connection.setLocalDescription(answer));
+    }
+    
+    function copyAnswer() {
+        console.log("Copying Answer");
+        navigator.clipboard.writeText(webp2pDialogue.connection.localDescription.sdp)
+            .then(() => showPage("pending"));
+    }
+
+    function pasteAnswer() {
+        console.log("Pasting Answer");
+        navigator.clipboard.readText()
+            .then(sdp => webp2pDialogue.connection.setRemoteDescription({type: "answer", sdp: sdp}))
+            .then(() => showPage("pending"));
+    }
+
+    function success() {
+        console.log("Success");
+        addConnection(webp2pDialogue.connection, webp2pDialogue.channel);
+        webp2pDialogue.connection = null;
+        webp2pDialogue.channel = null;
+        begin();
+    }
+
+    window.addEventListener("load", begin);
+</script>
+<script id="script-messagingApp">
+    let connections = [];
+
+    function Connection(connection, channel, messageCallback, closeCallback) {
+        this.connection = connection;
+        this.channel = channel;
+        this.channel.addEventListener("message", event => messageCallback(event.data));
+        this.channel.addEventListener("close", event => {
+            this.channel.close();
+            this.connection.close();
+            closeCallback(this);
+        });
+    }
+
+    function addConnection(connection, channel) {
+        connections.push(new Connection(connection, channel, recvMessage, handleClose));
+        recvMessage("~Connected~");
+    }
+
+    function recvMessage(message) {
+        console.log("Message In: " + message);
 
         const selfMessage = document.createElement("p");
         selfMessage.classList.add("other");
@@ -637,27 +262,19 @@
         messageDiv.scrollTop = messageDiv.scrollHeight;
     }
 
-    function handleClose(event) {
-        console.log("Channel was closed.");
-        console.log(event);
-
-        document.querySelector("#webp2p-connect").style.display = "block";
-        handleMessage("~Disconnected~");
-
-        connection.close();
-        channel.close();        
-        connection = null;
-        channel = null;
-    }
-
-    function begin() {
-        console.log("Begun!");
-        channel.send("~Connected~");
+    function handleClose(connection) {
+        const connectionIndex = connections.indexOf(connection);
+        connections = connections
+            .slice(0, connectionIndex)
+            .concat(connections.slice(connectionIndex + 1));
+        
+        recvMessage("~Disconnected~");
     }
 
     function sendMessage(message) {
         if (message.length === 0) return;
-        console.log("Out ->", message);
+
+        console.log("Message Out: " + message);
 
         const selfMessage = document.createElement("p");
         selfMessage.classList.add("self");
@@ -667,11 +284,12 @@
         messageDiv.append(selfMessage);
         messageDiv.scrollTop = messageDiv.scrollHeight;
 
-        if (connection === null || channel === null) {
+        if (!connections.length) {
             selfMessage.classList.add("failed");
-        } else {
-            channel.send(message);
+            return;
         }
+
+        connections.forEach(c => c.channel.send(message));
     }
 </script>
 </html>
