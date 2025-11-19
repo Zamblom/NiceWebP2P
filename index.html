@@ -177,7 +177,7 @@
 
     function copyOffer() {
         console.log("Copying Offer");
-        navigator.clipboard.writeText(webp2pDialogue.connection.localDescription.sdp)
+        navigator.clipboard.writeText(btoa(webp2pDialogue.connection.localDescription.sdp))
             .then(() => showPage("receive-answer"));
     }
 
@@ -202,7 +202,7 @@
         });
 
         navigator.clipboard.readText()
-            .then(sdp => webp2pDialogue.connection.setRemoteDescription({type: "offer", sdp: sdp}))
+            .then(sdp => webp2pDialogue.connection.setRemoteDescription({type: "offer", sdp: atob(sdp)}))
             .then(() => showPage("extend-answer"))
             .then(() => webp2pDialogue.connection.createAnswer())
             .then(answer => webp2pDialogue.connection.setLocalDescription(answer));
@@ -210,14 +210,14 @@
     
     function copyAnswer() {
         console.log("Copying Answer");
-        navigator.clipboard.writeText(webp2pDialogue.connection.localDescription.sdp)
+        navigator.clipboard.writeText(btoa(webp2pDialogue.connection.localDescription.sdp))
             .then(() => showPage("pending"));
     }
 
     function pasteAnswer() {
         console.log("Pasting Answer");
         navigator.clipboard.readText()
-            .then(sdp => webp2pDialogue.connection.setRemoteDescription({type: "answer", sdp: sdp}))
+            .then(sdp => webp2pDialogue.connection.setRemoteDescription({type: "answer", sdp: atob(sdp)}))
             .then(() => showPage("pending"));
     }
 
@@ -230,6 +230,15 @@
     }
 
     window.addEventListener("load", begin);
+    window.addEventListener("load", () => {
+        if (navigator.clipboard !== undefined) return;
+        console.log("Clipboard was not accessible, likely running without a secure context.");
+        console.log("Run `let clipboardCompensator = '[dataToPaste]';` to compensate.");
+        navigator.clipboard = {
+            readText: () => {return new Promise(res => res(clipboardCompensator))},
+            writeText: (text) => {return new Promise(res => res(console.log(text)))},
+        }
+    });
 </script>
 <script id="script-messagingApp">
     let connections = [];
